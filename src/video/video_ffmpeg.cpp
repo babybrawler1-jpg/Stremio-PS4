@@ -567,7 +567,7 @@ private:
 		uint32_t gen = generation_;
 		int vi = -1, ai = -1, si = -1;
 		AVCodecContext *sdec = nullptr;
-		int frames_converted = 0;
+		int frames_converted = 0, late_drops = 0, frames_dropped = 0;
 		double convert_time = 0;
 
 		auto open_decoder = [&](int index, AVCodecContext *&ctx) {
@@ -602,6 +602,31 @@ private:
 		auto on_video = [&]() {
 			const double pts = pts_of(vi);
 			if (pts >= 0 && pts < skip_until - 0.04) return;
+			// Catch up when software decoding can't keep pace with the audio clock:
+			// skip the deblocking filter (cheap, barely visible), and when far
+			// behind also skip non-reference frames (B-frames). Both are undone
+			// once playback is back in time. A frame that is already late is
+			// dropped before the costly colour conversion (the presenter would
+			// have discarded it anyway), but at least every 5th one is shown.
+			if (pts >= 0 && vdec) {
+				const double late = clock() - pts;
+				if (late > 0.12) {
+					vdec->skip_loop_filter = AVDISCARD_ALL;
+				} else if (late < 0.02) {
+					vdec->skip_loop_filter = AVDISCARD_DEFAULT;
+				}
+				if (late > 0.5) {
+					vdec->skip_frame = AVDISCARD_NONREF;
+				} else if (late < 0.1) {
+					vdec->skip_frame = AVDISCARD_DEFAULT;
+				}
+				if (late > 0.15 && late_drops < 4) {
+					late_drops++;
+					frames_dropped++;
+					return;
+				}
+				late_drops = 0;
+			}
 			int w = frame->width & ~1, h = frame->height & ~1;
 			if (w > MAX_WIDTH) {
 				h = (int)((int64_t)h * MAX_WIDTH / w) & ~1;
@@ -665,8 +690,8 @@ private:
 			}
 			convert_time += platform::now() - t0;
 			if (++frames_converted % 300 == 0) {
-				platform::log("ffmpeg: %d frames, avg convert %.1f ms, avg upload %.1f ms", frames_converted,
-						convert_time * 1000 / frames_converted, upload_time_ * 1000 / std::max(1, uploads_.load()));
+				platform::log("ffmpeg: %d frames (%d dropped late), avg convert %.1f ms, avg upload %.1f ms", frames_converted,
+						frames_dropped, convert_time * 1000 / frames_converted, upload_time_ * 1000 / std::max(1, uploads_.load()));
 			}
 			threads::Lock lock(mutex_);
 			if (gen == generation_) {
