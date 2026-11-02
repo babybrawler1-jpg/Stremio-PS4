@@ -21,6 +21,9 @@ namespace {
 const int WIDTH = 1920, HEIGHT = 1080;
 const int HTTP_WORKERS = 4;
 const double REPEAT_DELAY = 0.4, REPEAT_INTERVAL = 0.12;
+// A screen that appears fades in (and grows slightly) over this long.
+const double TRANSITION_SECONDS = 0.25;
+const float TRANSITION_START_SCALE = 0.985f;
 
 // Turns held buttons into "pressed this frame" events, with TV-style
 // auto-repeat for the directions.
@@ -112,11 +115,13 @@ int main() {
 		std::vector<std::unique_ptr<Screen>> screens;
 		std::vector<std::unique_ptr<Screen>> to_push;
 		int to_pop = 0;
+		bool changed = false; // the visible screen changed (drives the fade-in)
 		std::unique_ptr<Screen> new_root;
 		void push(std::unique_ptr<Screen> screen) override { to_push.push_back(std::move(screen)); }
 		void pop() override { to_pop++; }
 		void replace_root(std::unique_ptr<Screen> screen) override { new_root = std::move(screen); }
 		void apply() {
+			changed = changed || new_root || !to_push.empty() || (to_pop > 0 && screens.size() > 1);
 			if (new_root) {
 				while (!screens.empty()) screens.pop_back();
 				screens.push_back(std::move(new_root));
@@ -133,6 +138,7 @@ int main() {
 			while (!screens.empty()) screens.pop_back(); // top first
 		}
 	} stack;
+	double screen_age = 0;
 	int seen_auth_rev = -1;
 	int frames = 0;
 	InputRepeater input;
@@ -149,6 +155,7 @@ int main() {
 		if (s.auth_rev != seen_auth_rev) {
 			seen_auth_rev = s.auth_rev;
 			stack.clear(); // destroy old screens first (stops link polling / playback)
+			stack.changed = true;
 			if (s.logged_in()) {
 				stack.screens.push_back(std::unique_ptr<Screen>(new HomeScreen(fonts, stack)));
 				s.refresh();
@@ -157,10 +164,24 @@ int main() {
 			}
 		}
 
+		if (stack.changed) {
+			stack.changed = false;
+			screen_age = 0;
+		}
+		screen_age += dt;
 		Screen &top = *stack.screens.back();
 		top.update(dt, input.update(held, now));
 		renderer.begin_frame(theme::BASE_100);
-		top.draw(renderer);
+		if (screen_age < TRANSITION_SECONDS) {
+			// Ease-out fade-in of the whole screen.
+			const float t = (float)(screen_age / TRANSITION_SECONDS);
+			const float ease = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+			renderer.push(WIDTH / 2.0f, HEIGHT / 2.0f, TRANSITION_START_SCALE + (1.0f - TRANSITION_START_SCALE) * ease, ease);
+			top.draw(renderer);
+			renderer.pop();
+		} else {
+			top.draw(renderer);
+		}
 		renderer.end_frame();
 		platform::present();
 		stack.apply();
