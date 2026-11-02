@@ -636,7 +636,7 @@ void PlayerScreen::draw(Renderer &r) {
 		const std::string total = format_time(duration);
 		r.text(fonts_.body, total, right - fonts_.body.measure(total), ty, theme::BASE_CONTENT);
 		const std::vector<ui::Hint> hints = { { "\xC3\x97", "Play / Pause" }, { "\xE2\x97\x80 \xE2\x96\xB6", "Seek" },
-			{ "\xE2\x96\xB2", "Audio & subtitles" }, { "\xE2\x96\xB3", "Aspect ratio" }, { "\xE2\x97\x8B", "Back" } };
+			{ "\xE2\x86\x91", "Audio & subtitles" }, { "\xE2\x96\xB3", "Aspect ratio" }, { "\xE2\x97\x8B", "Back" } };
 		ui::hints(r, fonts_.small, hints, (W - ui::hints_width(fonts_.small, hints)) / 2, ty);
 		r.pop();
 	}
